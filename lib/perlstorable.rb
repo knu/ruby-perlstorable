@@ -1,4 +1,4 @@
-# -*- coding: undecided -*-
+# -*- mode: ruby; coding: utf-8 -*-
 #
 # perlstorable.rb - a library that emulates deserialization of Perl's Storable
 #
@@ -278,6 +278,8 @@ if $0 == __FILE__
 end
 
 __END__
+
+# TODO: Real tests needed
 
 require 'pp'
 obj = PerlStorable.thaw(ARGF.read)
