@@ -107,8 +107,7 @@ module PerlStorable
   SHT_TARRAY          = 5  # 4 + 1 -- tied array
   SHT_THASH           = 6  # 4 + 2 -- tied hash
 
-  # :nodoc: all
-  class Reader
+  class Reader	# :nodoc: all
     def initialize(io)
       @io = io
       @objects = []
