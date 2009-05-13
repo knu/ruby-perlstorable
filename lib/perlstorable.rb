@@ -1,20 +1,51 @@
 # -*- mode: ruby; coding: utf-8 -*-
-#
-# perlstorable.rb - a library that emulates deserialization of Perl's Storable
-#
+#--
+# perlstorable.rb - a library that emulates deserialization of Perl's Storable module
+#++
 # Copyright (c) 2009 Akinori MUSHA <knu@iDaemons.org>
 #
 # All rights reserved.  You can redistribute and/or modify it under the same
 # terms as Ruby.
 #
-
-# This library requires ruby 1.8.7 or better at the moment.
+# == Overview
+#
+# This library deals with data serialized by Perl's Storable module.
+#
+# This library requires ruby 1.8.7 or better (including 1.9) at the moment.
 
 require 'stringio'
 
+#
+# This module handles the data structure defined and implemented by
+# Perl's Storable module.
+#
 module PerlStorable
-  def self.thaw(str)
-    io = StringIO.new(str)
+  #
+  # call-seq:
+  #     PerlStorable.thaw(str) => object
+  #
+  # Deserializes a string serialized by Perl's Storable module.
+  #
+  # Only data frozen by Storable::nfreeze() is supported at the
+  # moment.
+  #
+  # Blessed Perl objects can be distinguished by using
+  # PerlStorable.blessed?(), and the package name of a blessed object
+  # can be obtained by PerlBlessed#perl_class.
+  #
+  # A list of currently unsupported data types includes:
+  #   - Tied objects (scalar/array/hash etc.)
+  #   - Weak reference
+  #   - Code references
+  #
+  def self.thaw(string_or_iolike)
+    if string_or_iolike.respond_to?(:read)
+      io = string_or_iolike
+      need_close = false
+    else
+      io = StringIO.new(string_or_iolike)
+      need_close = true
+    end
 
     case magic = io.read(2)
     when "\x05\x07"
@@ -24,6 +55,8 @@ module PerlStorable
     end
 
     PerlStorable::Reader.new(io).read
+  ensure
+    io.close if need_close
   end
 
   SX_OBJECT           =  0 # Already stored object
@@ -74,13 +107,10 @@ module PerlStorable
   SHT_TARRAY          = 5  # 4 + 1 -- tied array
   SHT_THASH           = 6  # 4 + 2 -- tied hash
 
+  # :nodoc: all
   class Reader
-    def initialize(obj)
-      if obj.respond_to?(:read)
-        @io = obj
-      else
-        @io = StringIO.new(obj)
-      end
+    def initialize(io)
+      @io = io
       @objects = []
       @packages = []
     end
@@ -258,18 +288,31 @@ module PerlStorable
       end
     end
 
+    # Reads an object at the posision.
     def read
       read_object(read_byte)
     end
   end
 
+  # This module is used to represent a Perl object blessed in a
+  # package by extending an object to hold a package name.
   module PerlBlessed
+    # Returns the Perl class the object was blessed into.
     attr_reader :perl_class
 
+    # call-seq:
+    #     perl_bless(perl_class) => self
+    #
+    # Blesses the object into +perl_class+ (String).
     def perl_bless(perl_class)
       @perl_class = perl_class
       self
     end
+  end
+
+  # Tests if an object is blessed.
+  def self.blessed?(obj)
+    obj.is_a?(PerlBlessed)
   end
 end
 
