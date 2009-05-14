@@ -107,6 +107,24 @@ module PerlStorable
   SHT_TARRAY          = 5  # 4 + 1 -- tied array
   SHT_THASH           = 6  # 4 + 2 -- tied hash
 
+  def self.inspect_value(value, const_regex = nil)	# :rdoc
+    names = constants.select { |name|
+      (!const_regex || const_regex.match(name)) &&
+      const_get(name) == value
+    }
+    if names.empty?
+      value.inspect
+    else
+      "%s (%s)" % [value.inspect, names.join(" | ")]
+    end
+  end
+
+  class PlaceHolder	# :nodoc:
+  end
+
+  PH_REF  = PlaceHolder.new
+  PH_TIED = PlaceHolder.new
+
   class Reader	# :nodoc: all
     def initialize(io)
       @io = io
@@ -155,21 +173,28 @@ module PerlStorable
     end
 
     def remember_object(object)
+      if @bless
+        object = PerlStorable.bless(object, @bless)
+      end
       unless object.nil?
         @objects.each_index { |i|
-          @objects[i] = object if @objects[i].nil?
+          @objects[i] = object if @objects[i].is_a?(PlaceHolder)
         }
       end
       @objects << object
       object
     end
 
+    def remember_tied()
+      @objects << PH_TIED
+    end
+
     def remember_ref()
-      @objects << nil
+      @objects << PH_REF
     end
 
     def remember_ref_undo()
-      @objects.pop while @objects.last.nil?
+      @objects.pop while @objects.last.equal?(PH_REF)
     end
 
     def lookup_object(index)
@@ -231,9 +256,15 @@ module PerlStorable
         hash.freeze if frozen
         hash
       when SX_REF
+        # In Perl, both an object and a reference to it must be
+        # remembered but in Ruby, there is no difference between them
+        # because everything is a reference, so remember the object
+        # twice.  remember_ref puts a placeholder for forward reference.
         remember_ref
         read
       when SX_OBJECT
+        # The following object is already remembered, so cancel
+        # remembering.
         remember_ref_undo
         lookup_object(read_int32)
       when SX_OVERLOAD
@@ -241,12 +272,15 @@ module PerlStorable
       when SX_BLESS
         package = read_blob(read_flexlen)
         remember_package(package)
-        object = read
-        object.extend(PerlBlessed).perl_bless(package)
+        # Blessing an object is simply labeling (does not produce a
+        # new reference), so there is no extra remember_object()
+        # needed here, but it has to be made sure that the following
+        # object is blessed and that is exactly what read_blessed()
+        # does.
+        object = read_blessed(package)
       when SX_IX_BLESS
         package = @packages[read_flexlen]
-        object = read
-        object.extend(PerlBlessed).perl_bless(package)
+        object = read_blessed(package)
       when SX_HOOK
         flags = read_byte
 
@@ -274,8 +308,16 @@ module PerlStorable
           when SHT_THASH
           end
         else
-          string.extend(PerlBlessed).perl_bless(package)
+          PerlStorable.bless(string, package)
         end
+      when SX_TIED_SCALAR, SX_TIED_ARRAY, SX_TIED_HASH
+        # Tying an object produces a new object, so there has to be a
+        # placeholder just like the SX_REF case.  However, it may not
+        # be affected by remember_ref_undo() because tie always
+        # produces a new object, hence remember_tied() instead of
+        # remember_ref().
+        remember_tied
+        read
       when SX_SV_YES
         true
       when SX_SV_NO
@@ -283,8 +325,17 @@ module PerlStorable
       when SX_UNDEF, SX_SV_UNDEF
         nil
       else
-        raise TypeError, 'unknown data type: %d' % type
+        raise TypeError, 'unknown data type: %s' % PerlStorable.inspect_value(type, /^SX_/)
       end
+    end
+
+    def read_blessed(package)
+      # Make sure the following object is blessed before it is
+      # remembered.
+      @bless = package
+      read
+    ensure
+      @bless = nil
     end
 
     # Reads an object at the posision.
@@ -307,8 +358,57 @@ module PerlStorable
       @perl_class = perl_class
       self
     end
+
+    # :stopdoc:
+    def inspect_blessed
+      '#<PerlBlessed(%s, %s)>' % [inspect_unblessed, perl_class.inspect]
+    end
+
+    def self.included(mod)
+      mod.module_eval {
+        alias inspect_unblessed inspect
+        alias inspect inspect_blessed
+      }
+    end
+    # :startdoc:
+
   end
 
+  class PerlScalar
+    def initialize(value)
+      @value = value
+    end
+
+    def inspect
+      '#<%s:%s>' % [self.class, @value.inspect]
+    end
+  end
+
+  # call-seq:
+  #     bless(object, perl_class) => self
+  #
+  # Blesses a given object into +perl_class+ (String).
+  def self.bless(obj, perl_class)
+    if !obj.is_a?(PerlBlessed)
+      # Use include instead of extend for PerlBlessed.included to be
+      # called
+      begin
+        class << obj
+          include PerlBlessed
+        end
+      rescue
+        obj = PerlScalar.new(obj)
+        class << obj
+          include PerlBlessed
+        end
+      end
+    end
+    obj.perl_bless(perl_class)
+  end
+
+  # call-seq:
+  #     blessed?(object) => boolean
+  #
   # Tests if an object is blessed.
   def self.blessed?(obj)
     obj.is_a?(PerlBlessed)
