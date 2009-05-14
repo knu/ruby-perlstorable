@@ -13,4 +13,5 @@ Gem::Specification.new do |s|
   s.require_paths = ["lib"]
   s.has_rdoc = true
   s.rdoc_options = ["--inline-source", "--charset=UTF-8"]
+  s.test_files = Dir.glob("tests/*")
 end
