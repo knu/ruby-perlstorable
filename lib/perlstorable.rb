@@ -23,6 +23,7 @@ module PerlStorable
   #
   # call-seq:
   #     PerlStorable.thaw(str) => object
+  #     PerlStorable.load(str) => object
   #
   # Deserializes a string serialized by Perl's Storable module.
   #
@@ -57,6 +58,10 @@ module PerlStorable
     PerlStorable::Reader.new(io).read
   ensure
     io.close if need_close
+  end
+
+  class << self
+    alias load thaw
   end
 
   SX_OBJECT           =  0 # Already stored object
@@ -374,9 +379,27 @@ module PerlStorable
 
   end
 
+  # This class represents a Perl scalar value that is immutable in
+  # Ruby. (most likely an integer)
   class PerlScalar
+    attr_reader :value
+
     def initialize(value)
       @value = value
+    end
+
+    def to_i
+      @value.to_i
+    end
+    alias to_int to_i
+
+    def to_s
+      @value.to_s
+    end
+    alias to_str to_s
+
+    def to_f
+      @value.to_f
     end
 
     def inspect
@@ -414,15 +437,3 @@ module PerlStorable
     obj.is_a?(PerlBlessed)
   end
 end
-
-if $0 == __FILE__
-  eval DATA.read, nil, $0, __LINE__+4
-end
-
-__END__
-
-# TODO: Real tests needed
-
-require 'pp'
-obj = PerlStorable.thaw(ARGF.read)
-pp obj
