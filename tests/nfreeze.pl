@@ -14,7 +14,11 @@ my $code = do {
     }
 };
 
-my $value = eval $code;
+my $value = do {
+    no strict;
+    no warnings;
+    eval $code;
+};
 
 if ($@) {
     print STDERR "$@\n";
