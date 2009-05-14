@@ -1,7 +1,7 @@
 Gem::Specification.new do |s|
   s.specification_version = 2
   s.name = "perlstorable"
-  s.version = "0.1.1"
+  s.version = "0.1.2"
   s.required_ruby_version = Gem::Requirement.new(">= 1.8.7")
   s.authors = ["Akinori MUSHA"]
   s.date = "2009-05-13"
