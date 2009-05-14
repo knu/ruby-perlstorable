@@ -178,8 +178,9 @@ module PerlStorable
     end
 
     def remember_object(object)
-      if @bless
-        object = PerlStorable.bless(object, @bless)
+      if @bless_next
+        object = PerlStorable.bless(object, @bless_next)
+        @bless_next = nil
       end
       unless object.nil?
         @objects.each_index { |i|
@@ -337,10 +338,8 @@ module PerlStorable
     def read_blessed(package)
       # Make sure the following object is blessed before it is
       # remembered.
-      @bless = package
+      @bless_next = package
       read
-    ensure
-      @bless = nil
     end
 
     # Reads an object at the posision.
