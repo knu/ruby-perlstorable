@@ -419,11 +419,9 @@ module PerlStorable
         class << obj
           include PerlBlessed
         end
-      rescue
+      rescue TypeError
         obj = PerlScalar.new(obj)
-        class << obj
-          include PerlBlessed
-        end
+        retry
       end
     end
     obj.perl_bless(perl_class)
