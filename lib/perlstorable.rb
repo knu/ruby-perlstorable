@@ -196,10 +196,6 @@ module PerlStorable
       @objects[i] = PerlCode.new(object)
     end
 
-    def remember_tied()
-      @objects << nil
-    end
-
     def lookup_object(index)
       @objects[index]
     end
