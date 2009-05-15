@@ -124,12 +124,6 @@ module PerlStorable
     end
   end
 
-  class PlaceHolder	# :nodoc:
-  end
-
-  PH_REF  = PlaceHolder.new
-  PH_TIED = PlaceHolder.new
-
   class Reader	# :nodoc: all
     def initialize(io)
       @io = io
@@ -178,29 +172,32 @@ module PerlStorable
     end
 
     def remember_object(object)
-      if @bless_next
-        object = PerlStorable.bless(object, @bless_next)
-        @bless_next = nil
-      end
-      unless object.nil?
-        @objects.each_index { |i|
-          @objects[i] = object if @objects[i].is_a?(PlaceHolder)
-        }
-      end
       @objects << object
       object
     end
 
+    def remember_ahead(&block)
+      i = @objects.size
+      @objects << nil
+      @objects[i] = block.call
+    end
+
+    def remember_as_blessed(package, &block)
+      # Blessing an object is simply labeling (does not produce a new
+      # reference), so just bless the object remebered last.
+      i = @objects.size
+      object = block.call
+      @objects[i] = PerlStorable.bless(object, package)
+    end
+
+    def remember_as_code(&block)
+      i = @objects.size
+      object = block.call
+      @objects[i] = PerlCode.new(object)
+    end
+
     def remember_tied()
-      @objects << PH_TIED
-    end
-
-    def remember_ref()
-      @objects << PH_REF
-    end
-
-    def remember_ref_undo()
-      @objects.pop while @objects.last.equal?(PH_REF)
+      @objects << nil
     end
 
     def lookup_object(index)
@@ -265,28 +262,36 @@ module PerlStorable
         # In Perl, both an object and a reference to it must be
         # remembered but in Ruby, there is no difference between them
         # because everything is a reference, so remember the object
-        # twice.  remember_ref puts a placeholder for forward reference.
-        remember_ref
-        read
+        # twice.
+        case next_type = read_byte
+        when SX_OBJECT
+          # The following object is already remembered, so omit
+          # remembering.
+          read_object(next_type)
+        when SX_BLESS, SX_IX_BLESS
+          # Blessing an object is simply labeling (does not produce a
+          # new reference), so no extra remembering is needed.
+          read_object(next_type)
+        else
+          remember_ahead {
+            read_object(next_type)
+          }
+        end
       when SX_OBJECT
-        # The following object is already remembered, so cancel
-        # remembering.
-        remember_ref_undo
         lookup_object(read_int32)
       when SX_OVERLOAD
         read
       when SX_BLESS
         package = read_blob(read_flexlen)
         remember_package(package)
-        # Blessing an object is simply labeling (does not produce a
-        # new reference), so there is no extra remember_object()
-        # needed here, but it has to be made sure that the following
-        # object is blessed and that is exactly what read_blessed()
-        # does.
-        object = read_blessed(package)
+        remember_as_blessed(package) {
+          read
+        }
       when SX_IX_BLESS
         package = @packages[read_flexlen]
-        object = read_blessed(package)
+        remember_as_blessed(package) {
+          read
+        }
       when SX_HOOK
         flags = read_byte
 
@@ -317,13 +322,14 @@ module PerlStorable
           PerlStorable.bless(string, package)
         end
       when SX_TIED_SCALAR, SX_TIED_ARRAY, SX_TIED_HASH
-        # Tying an object produces a new object, so there has to be a
-        # placeholder just like the SX_REF case.  However, it may not
-        # be affected by remember_ref_undo() because tie always
-        # produces a new object, hence remember_tied() instead of
-        # remember_ref().
-        remember_tied
-        read
+        # Tying an object produces a new object
+        remember_ahead {
+          PerlTiedValue.new(read)
+        }
+      when SX_CODE
+        remember_as_code {
+          read
+        }
       when SX_SV_YES
         true
       when SX_SV_NO
@@ -333,13 +339,6 @@ module PerlStorable
       else
         raise TypeError, 'unknown data type: %s' % PerlStorable.inspect_value(type, /^SX_/)
       end
-    end
-
-    def read_blessed(package)
-      # Make sure the following object is blessed before it is
-      # remembered.
-      @bless_next = package
-      read
     end
 
     # Reads an object at the posision.
@@ -365,7 +364,11 @@ module PerlStorable
 
     # :stopdoc:
     def inspect_blessed
-      '#<PerlBlessed(%s, %s)>' % [inspect_unblessed, perl_class.inspect]
+      if self.is_a?(PerlTiedValue)
+        '#<%s:tie(%s, %s)>' % [self.class.name, self.value.inspect, perl_class.inspect]
+      else
+        '#<%s:bless(%s, %s)>' % [self.class.name, inspect_unblessed, perl_class.inspect]
+      end
     end
 
     def self.included(mod)
@@ -375,7 +378,6 @@ module PerlStorable
       }
     end
     # :startdoc:
-
   end
 
   # This class represents a Perl scalar value that is immutable in
@@ -406,6 +408,46 @@ module PerlStorable
     end
   end
 
+  # This class represents a tied object.
+  class PerlTiedValue
+    attr_reader :value
+
+    def initialize(value)
+      @value = value
+    end
+
+    def to_i
+      @value.to_i
+    end
+    alias to_int to_i
+
+    def to_s
+      @value.to_s
+    end
+    alias to_str to_s
+
+    def to_f
+      @value.to_f
+    end
+
+    def inspect
+      '#<%s:%s>' % [self.class, @value.inspect]
+    end
+  end
+
+  # This class represents a code reference.
+  class PerlCode
+    attr_reader :source
+
+    def initialize(source)
+      @source = source.freeze
+    end
+
+    def inspect
+      '#<%s:%s>' % [self.class, @source.inspect]
+    end
+  end
+
   # call-seq:
   #     bless(object, perl_class) => self
   #
@@ -432,5 +474,26 @@ module PerlStorable
   # Tests if an object is blessed.
   def self.blessed?(obj)
     obj.is_a?(PerlBlessed)
+  end
+
+  # call-seq:
+  #     tied?(object) => boolean
+  #
+  # Tests if an object is a tied object.
+  def self.tied?(obj)
+    obj.is_a?(PerlTiedValue)
+  end
+
+  # call-seq:
+  #     tied(tied_object) => object
+  #
+  # Returns the object a given object is tied to.  Returns nil if it
+  # is not a tied object.
+  def self.tied(obj)
+    if tied?(obj)
+      obj.value
+    else
+      nil
+    end
   end
 end
