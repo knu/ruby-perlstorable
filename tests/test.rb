@@ -31,7 +31,7 @@ class TC_PerlStorable < Test::Unit::TestCase
           bless { value => $value }, $class;
         }
       };
-      $a = ['hello', 1, 2.3, [-4, 5678901234567890], 'world'];
+      $a = ['hello', 1, 2.3, [-4, 5678901234], 'world'];
       $o = TestPackage->new($a);
       $result = {
         ('test' x 100) => $o,
@@ -48,7 +48,7 @@ class TC_PerlStorable < Test::Unit::TestCase
       assert_instance_of(PerlStorable::PerlCode, sub)
       assert_instance_of(String, sub.source)
       a = value['x']
-      assert_equal(['hello', 1, "2.3", [-4, "5678901234567890"], 'world'], a)
+      assert_equal(['hello', 1, "2.3", [-4, "5678901234"], 'world'], a)
       o = value['5']
       assert_equal(true, PerlStorable.blessed?(o))
       assert_equal('TestPackage', o.perl_class)
